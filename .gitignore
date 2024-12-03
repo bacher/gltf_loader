@@ -1,0 +1,10 @@
+# Ignore some special directories
+.zig-cache/
+zig-out/
+
+tmp/
+*.DS_Store
+.idea/
+*.png
+
+src/indexes.bin
