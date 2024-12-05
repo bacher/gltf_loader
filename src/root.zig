@@ -53,21 +53,7 @@ pub const GltfLoader = struct {
 
         const scene = gltf_root.scenes[0];
 
-        const mesh_index: t.MeshIndex = for (scene.nodes) |nodeIndex| {
-            const node = gltf_wrapper.getNodeByIndex(nodeIndex);
-
-            if (debug) {
-                std.debug.print("NODE[{}] = \"{s}\" {any}\n", .{
-                    nodeIndex,
-                    node.name.?,
-                    node,
-                });
-            }
-
-            if (node.mesh) |mesh_index| {
-                break mesh_index;
-            }
-        } else return error.NoMesh;
+        const mesh_index = findMeshNodeIndex(gltf_wrapper, scene.nodes) orelse return error.NoMesh;
 
         const mesh = gltf_wrapper.getMeshByIndex(mesh_index);
 
@@ -196,6 +182,30 @@ pub const ModelBuffers = struct {
     }
 };
 
+fn findMeshNodeIndex(gltf_wrapper: *const GltfWrapper, node_indexes: []t.NodeIndex) ?t.MeshIndex {
+    return for (node_indexes) |node_index| {
+        const node = gltf_wrapper.getNodeByIndex(node_index);
+
+        if (debug) {
+            std.debug.print("NODE[{}] = \"{s}\" {any}\n", .{
+                node_index,
+                node.name.?,
+                node,
+            });
+        }
+
+        if (node.mesh) |mesh_index| {
+            break mesh_index;
+        }
+
+        if (node.children) |children| {
+            if (findMeshNodeIndex(gltf_wrapper, children)) |mesh_node_index| {
+                break mesh_node_index;
+            }
+        }
+    } else null;
+}
+
 test "GltfLoader can load model" {
     const test_allocator = std.testing.allocator;
 
@@ -204,7 +214,30 @@ test "GltfLoader can load model" {
 
     const loader = try GltfLoader.init(
         test_allocator,
-        "assets/man/man.gltf.json",
+        "assets/man/man.gltf",
+    );
+    defer loader.deinit();
+
+    const buffers = try loader.loadModelBuffers(test_allocator);
+
+    std.debug.print("indexes   buffer len = {}\n", .{buffers.indexes.len});
+    std.debug.print("positions buffer len = {}\n", .{buffers.positions.len});
+    std.debug.print("normals   buffer len = {}\n", .{buffers.normals.len});
+
+    defer {
+        buffers.deinit(test_allocator);
+    }
+}
+
+test "GltfLoader can load model with odd number of triangles" {
+    const test_allocator = std.testing.allocator;
+
+    zstbi.init(test_allocator);
+    defer zstbi.deinit();
+
+    const loader = try GltfLoader.init(
+        test_allocator,
+        "assets/man-odd/man.gltf",
     );
     defer loader.deinit();
 
@@ -227,7 +260,7 @@ test "GltfLoader can load model texture" {
 
     const loader = try GltfLoader.init(
         test_allocator,
-        "assets/man/man.gltf.json",
+        "assets/man/man.gltf",
     );
     defer loader.deinit();
 
