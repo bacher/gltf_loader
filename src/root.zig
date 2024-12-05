@@ -9,6 +9,11 @@ const t = @This();
 const debug = false;
 
 pub const GltfLoader = struct {
+    const LoadedBuffer = struct {
+        buffer: []align(4) u8,
+        slice: []align(4) u8,
+    };
+
     arena: std.heap.ArenaAllocator,
     gpa_allocator: std.mem.Allocator,
     gltf_wrapper: *const GltfWrapper,
@@ -104,29 +109,50 @@ pub const GltfLoader = struct {
         const normals_buffer = try self.loadBufferData(file, allocator, normals_accessor);
         const texcoord_buffer = try self.loadBufferData(file, allocator, texcoord_accessor);
 
-        const indexes_buffer_u16 = std.mem.bytesAsSlice([3]u16, indexes_buffer);
-        const positions_buffer_f32 = std.mem.bytesAsSlice([3]f32, positions_buffer);
-        const normals_buffer_f32 = std.mem.bytesAsSlice([3]f32, normals_buffer);
-        const texcoord_buffer_f32 = std.mem.bytesAsSlice([2]f32, texcoord_buffer);
+        const indexes_buffer_u16 = std.mem.bytesAsSlice([3]u16, indexes_buffer.slice);
+        const positions_buffer_f32 = std.mem.bytesAsSlice([3]f32, positions_buffer.slice);
+        const normals_buffer_f32 = std.mem.bytesAsSlice([3]f32, normals_buffer.slice);
+        const texcoord_buffer_f32 = std.mem.bytesAsSlice([2]f32, texcoord_buffer.slice);
 
         return .{
-            .indexes = indexes_buffer_u16,
-            .positions = positions_buffer_f32,
-            .normals = normals_buffer_f32,
-            .texcoord = texcoord_buffer_f32,
+            .indexes = .{
+                .data = indexes_buffer_u16,
+                .buffer = indexes_buffer.buffer,
+            },
+            .positions = .{
+                .data = positions_buffer_f32,
+                .buffer = positions_buffer.buffer,
+            },
+            .normals = .{
+                .data = normals_buffer_f32,
+                .buffer = normals_buffer.buffer,
+            },
+            .texcoord = .{
+                .data = texcoord_buffer_f32,
+                .buffer = texcoord_buffer.buffer,
+            },
         };
     }
 
-    fn loadBufferData(self: *const GltfLoader, file: std.fs.File, allocator: std.mem.Allocator, accessor: t.Accessor) ![]align(4) u8 {
+    fn loadBufferData(self: *const GltfLoader, file: std.fs.File, allocator: std.mem.Allocator, accessor: t.Accessor) !LoadedBuffer {
         const buffer_view = self.gltf_wrapper.getBufferViewByIndex(accessor.bufferView);
 
-        const result_buffer = try allocator.alignedAlloc(u8, 4, buffer_view.byteLength);
+        const div4: u32 = @divFloor(buffer_view.byteLength, 4);
+        var aligned_lenght = div4 * 4;
+        if (aligned_lenght != buffer_view.byteLength) {
+            aligned_lenght += 4;
+        }
+
+        const result_buffer = try allocator.alignedAlloc(u8, 4, aligned_lenght);
 
         try file.seekTo(buffer_view.byteOffset);
-        const read_size = try file.read(result_buffer);
-        std.debug.assert(read_size == result_buffer.len);
+        const read_size = try file.read(result_buffer[0..buffer_view.byteLength]);
+        std.debug.assert(read_size == buffer_view.byteLength);
 
-        return result_buffer;
+        return .{
+            .slice = result_buffer[0..buffer_view.byteLength],
+            .buffer = result_buffer,
+        };
     }
 
     pub fn loadTextureData(self: *const GltfLoader, file_path: []const u8) !zstbi.Image {
@@ -168,17 +194,31 @@ const GltfWrapper = struct {
     }
 };
 
+pub fn ModelBuffer(comptime T: type) type {
+    return struct {
+        data: []T,
+        buffer: []u8,
+    };
+}
+
 pub const ModelBuffers = struct {
-    indexes: [][3]u16,
-    positions: [][3]f32,
-    normals: [][3]f32,
-    texcoord: [][2]f32,
+    indexes: ModelBuffer([3]u16),
+    positions: ModelBuffer([3]f32),
+    normals: ModelBuffer([3]f32),
+    texcoord: ModelBuffer([2]f32),
+
+    pub fn printDebugStats(self: *const ModelBuffers) void {
+        std.debug.print("indexes   buffer len = {}\n", .{self.indexes.data.len});
+        std.debug.print("positions buffer len = {}\n", .{self.positions.data.len});
+        std.debug.print("normals   buffer len = {}\n", .{self.normals.data.len});
+        std.debug.print("texcoord  buffer len = {}\n", .{self.texcoord.data.len});
+    }
 
     pub fn deinit(self: *const ModelBuffers, allocator: std.mem.Allocator) void {
-        allocator.free(self.indexes);
-        allocator.free(self.positions);
-        allocator.free(self.normals);
-        allocator.free(self.texcoord);
+        allocator.free(self.indexes.buffer);
+        allocator.free(self.positions.buffer);
+        allocator.free(self.normals.buffer);
+        allocator.free(self.texcoord.buffer);
     }
 };
 
@@ -220,9 +260,7 @@ test "GltfLoader can load model" {
 
     const buffers = try loader.loadModelBuffers(test_allocator);
 
-    std.debug.print("indexes   buffer len = {}\n", .{buffers.indexes.len});
-    std.debug.print("positions buffer len = {}\n", .{buffers.positions.len});
-    std.debug.print("normals   buffer len = {}\n", .{buffers.normals.len});
+    buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
@@ -243,9 +281,7 @@ test "GltfLoader can load model with odd number of triangles" {
 
     const buffers = try loader.loadModelBuffers(test_allocator);
 
-    std.debug.print("indexes   buffer len = {}\n", .{buffers.indexes.len});
-    std.debug.print("positions buffer len = {}\n", .{buffers.positions.len});
-    std.debug.print("normals   buffer len = {}\n", .{buffers.normals.len});
+    buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
