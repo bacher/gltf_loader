@@ -15,16 +15,15 @@ pub fn build(b: *std.Build) void {
     // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
 
-    // Is it necessary?
     _ = b.addModule("root", .{
         .root_source_file = b.path("src/root.zig"),
-        .imports = &.{
-            .{ .name = "zstbi", .module = b.dependency("zstbi", .{}).module("root") },
-        },
+        // .imports = &.{
+        //     .{ .name = "zstbi", .module = b.dependency("zstbi", .{}).module("root") },
+        // },
     });
 
     const lib = b.addStaticLibrary(.{
-        .name = "gltf-loader",
+        .name = "gltf_loader",
         // In this case the main source file is merely a path, however, in more
         // complicated build scripts, this could be a generated file.
         .root_source_file = b.path("src/root.zig"),
@@ -39,7 +38,6 @@ pub fn build(b: *std.Build) void {
     });
     lib.root_module.addImport("zstbi", zstbi.module("root"));
     lib.linkLibrary(zstbi.artifact("zstbi"));
-
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
