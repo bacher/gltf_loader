@@ -26,6 +26,7 @@ pub const Node = struct {
     rotation: ?[4]f64 = null,
     scale: ?[3]f64 = null,
     translation: ?[3]f64 = null,
+    matrix: ?*TransformMatrix = null,
     mesh: ?MeshIndex = null,
     skin: ?u32 = null,
 };
@@ -89,3 +90,5 @@ pub const Buffer = struct {
     byteLength: u32,
     uri: []const u8,
 };
+
+pub const TransformMatrix = [16]f32;

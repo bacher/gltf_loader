@@ -1,12 +1,41 @@
 const std = @import("std");
 const mem = std.mem;
 const zstbi = @import("zstbi");
+const expect = std.testing.expect;
 
 // TODO: maybe adding pub to be able to import types from package as well.
-usingnamespace @import("./types.zig");
-const t = @This();
+// usingnamespace @import("./types.zig");
+// const t = @This();
+const t = @import("./types.zig");
 
-const debug = false;
+const DEBUG = false;
+
+pub const SceneObject = struct {
+    transform_matrix: ?*const t.TransformMatrix,
+    children: ?[]const SceneObject,
+    mesh: ?*const Mesh,
+
+    fn printDebugInfo(self: *const SceneObject) void {
+        const children_number = children_number: {
+            if (self.children) |children| {
+                break :children_number children.len;
+            } else {
+                break :children_number 0;
+            }
+        };
+
+        std.debug.print("debug: scene object. children={d:3}, matrix={:5}, mesh={?}\n", .{
+            children_number,
+            self.transform_matrix != null,
+            self.mesh,
+        });
+    }
+};
+
+pub const Mesh = struct {
+    mesh_primitive: *const t.Primitive,
+    geometry_bounds: GeometryBounds,
+};
 
 pub const GltfLoader = struct {
     const LoadedBuffer = struct {
@@ -15,10 +44,10 @@ pub const GltfLoader = struct {
     };
 
     arena: std.heap.ArenaAllocator,
+    allocator: std.mem.Allocator,
     gpa_allocator: std.mem.Allocator,
     gltf_wrapper: *const GltfWrapper,
-    mesh_primitive: *const t.Primitive,
-    geometry_bounds: GeometryBounds,
+    root: SceneObject,
     gltf_file_root: []const u8,
 
     pub fn init(gpa_allocator: std.mem.Allocator, file_path: []const u8) !GltfLoader {
@@ -26,7 +55,10 @@ pub const GltfLoader = struct {
         errdefer arena.deinit();
         const allocator = arena.allocator();
 
-        const gltf_file_root = std.fs.path.dirname(file_path) orelse return error.DirNotFound;
+        const gltf_file_root = try allocator.dupe(
+            u8,
+            std.fs.path.dirname(file_path) orelse return error.DirNotFound,
+        );
 
         const file_handler = try std.fs.cwd().openFile(file_path, .{});
 
@@ -56,47 +88,155 @@ pub const GltfLoader = struct {
 
         // Supports only GLTF files with one scene.
         std.debug.assert(gltf_root.scenes.len == 1);
-
         const scene = gltf_root.scenes[0];
 
-        const mesh_index = findMeshNodeIndex(gltf_wrapper, scene.nodes) orelse return error.NoMesh;
-
-        const mesh = gltf_wrapper.getMeshByIndex(mesh_index);
-
-        // Supports only GLTF files with one primitive per mesh.
-        std.debug.assert(mesh.primitives.len == 1);
-
-        const geometry_bounds = try gltf_wrapper.getGeometryBounds(&mesh.primitives[0]);
-
-        return .{
+        var gltf_loader: GltfLoader = .{
             .arena = arena,
+            .allocator = allocator,
             .gpa_allocator = gpa_allocator,
             .gltf_wrapper = gltf_wrapper,
-            .mesh_primitive = &mesh.primitives[0],
-            .geometry_bounds = geometry_bounds,
+            .root = undefined,
             .gltf_file_root = gltf_file_root,
+        };
+
+        gltf_loader.root = try gltf_loader.processSceneRoot(scene);
+
+        return gltf_loader;
+    }
+
+    fn processSceneRoot(self: *const GltfLoader, scene: t.Scene) !SceneObject {
+        const allocator = self.allocator;
+        const gltf_wrapper = self.gltf_wrapper;
+
+        const children = try allocator.alloc(SceneObject, scene.nodes.len);
+        errdefer allocator.free(children);
+
+        for (scene.nodes, 0..) |node_index, index| {
+            const node = gltf_wrapper.getNodeByIndex(node_index);
+            children[index] = try self.processSceneObject(node);
+        }
+
+        return .{
+            .transform_matrix = null,
+            .children = children,
+            .mesh = null,
         };
     }
 
-    pub fn loadModelBuffers(self: *const GltfLoader, allocator: std.mem.Allocator) !ModelBuffers {
+    fn processSceneObject(self: *const GltfLoader, node: t.Node) !SceneObject {
+        const allocator = self.allocator;
+        const gltf_wrapper = self.gltf_wrapper;
+
+        var transform_matrix: ?*const t.TransformMatrix = null;
+        if (node.matrix) |matrix| {
+            transform_matrix = matrix;
+        }
+
+        var mesh: ?*Mesh = null;
+        if (node.mesh) |mesh_index| {
+            const gltf_mesh = gltf_wrapper.getMeshByIndex(mesh_index);
+
+            // Supports only GLTF files with one primitive per mesh.
+            std.debug.assert(gltf_mesh.primitives.len == 1);
+
+            const mesh_ptr = try allocator.create(Mesh);
+            errdefer allocator.destroy(mesh_ptr);
+
+            const geometry_bounds = try gltf_wrapper.getGeometryBounds(&gltf_mesh.primitives[0]);
+            mesh_ptr.* = .{
+                .mesh_primitive = &gltf_mesh.primitives[0],
+                .geometry_bounds = geometry_bounds,
+            };
+
+            mesh = mesh_ptr;
+        }
+
+        var children: ?[]const SceneObject = null;
+        if (node.children) |node_children| {
+            const children_ptr = try allocator.alloc(SceneObject, node_children.len);
+            errdefer allocator.free(children_ptr);
+
+            for (node_children, 0..) |child_node_index, index| {
+                const child_node = gltf_wrapper.getNodeByIndex(child_node_index);
+                children_ptr[index] = try self.processSceneObject(child_node);
+            }
+            children = children_ptr;
+        }
+
+        return .{
+            .transform_matrix = transform_matrix,
+            .children = children,
+            .mesh = mesh,
+        };
+    }
+
+    fn findMeshNodeIndex(gltf_wrapper: *const GltfWrapper, node_indexes: []t.NodeIndex) ?t.MeshIndex {
+        return for (node_indexes) |node_index| {
+            const node = gltf_wrapper.getNodeByIndex(node_index);
+
+            if (DEBUG) {
+                std.debug.print("NODE[{}] = \"{s}\" {any}\n", .{
+                    node_index,
+                    node.name.?,
+                    node,
+                });
+            }
+
+            if (node.mesh) |mesh_index| {
+                break mesh_index;
+            }
+
+            if (node.children) |children| {
+                if (findMeshNodeIndex(gltf_wrapper, children)) |mesh_node_index| {
+                    break mesh_node_index;
+                }
+            }
+        } else null;
+    }
+
+    pub fn findFirstObjectWithMesh(self: *const GltfLoader) ?*const SceneObject {
+        return self.findFirstObjectWithMeshNested(&self.root);
+    }
+
+    fn findFirstObjectWithMeshNested(
+        self: *const GltfLoader,
+        object: *const SceneObject,
+    ) ?*const SceneObject {
+        if (object.mesh != null) {
+            return object;
+        }
+
+        if (object.children) |children| {
+            for (children) |*child| {
+                const found = self.findFirstObjectWithMeshNested(child);
+                if (found != null) {
+                    return found;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    pub fn loadModelBuffers(self: *const GltfLoader, allocator: std.mem.Allocator, mesh: *const Mesh) !ModelBuffers {
         // Supports only glTF files with one binary
         std.debug.assert(self.gltf_wrapper.gltf_root.buffers.len == 1);
         const binary_file_path = self.gltf_wrapper.gltf_root.buffers[0].uri;
 
         const indexes_accessor = self.gltf_wrapper.getAccessorByIndex(
-            self.mesh_primitive.indices,
+            mesh.mesh_primitive.indices,
         );
 
         const positions_accessor = self.gltf_wrapper.getAccessorByIndex(
-            self.mesh_primitive.attributes.POSITION,
+            mesh.mesh_primitive.attributes.POSITION,
         );
 
         const normals_accessor = self.gltf_wrapper.getAccessorByIndex(
-            self.mesh_primitive.attributes.NORMAL,
+            mesh.mesh_primitive.attributes.NORMAL,
         );
 
         const texcoord_accessor = self.gltf_wrapper.getAccessorByIndex(
-            self.mesh_primitive.attributes.TEXCOORD_0,
+            mesh.mesh_primitive.attributes.TEXCOORD_0,
         );
 
         const buffer_file_path = try std.fs.path.join(self.gpa_allocator, &.{
@@ -166,7 +306,7 @@ pub const GltfLoader = struct {
         });
         defer self.gpa_allocator.free(buffer_file_path);
 
-        std.debug.print("loading file: {s}\n", .{buffer_file_path});
+        // std.debug.print("loading file: {s}\n", .{buffer_file_path});
 
         return try zstbi.Image.loadFromFile(buffer_file_path, 4);
     }
@@ -253,30 +393,6 @@ pub const ModelBuffers = struct {
     }
 };
 
-fn findMeshNodeIndex(gltf_wrapper: *const GltfWrapper, node_indexes: []t.NodeIndex) ?t.MeshIndex {
-    return for (node_indexes) |node_index| {
-        const node = gltf_wrapper.getNodeByIndex(node_index);
-
-        if (debug) {
-            std.debug.print("NODE[{}] = \"{s}\" {any}\n", .{
-                node_index,
-                node.name.?,
-                node,
-            });
-        }
-
-        if (node.mesh) |mesh_index| {
-            break mesh_index;
-        }
-
-        if (node.children) |children| {
-            if (findMeshNodeIndex(gltf_wrapper, children)) |mesh_node_index| {
-                break mesh_node_index;
-            }
-        }
-    } else null;
-}
-
 test "GltfLoader can load model" {
     const test_allocator = std.testing.allocator;
 
@@ -289,9 +405,13 @@ test "GltfLoader can load model" {
     );
     defer loader.deinit();
 
-    const buffers = try loader.loadModelBuffers(test_allocator);
+    const object = loader.findFirstObjectWithMesh();
+    try expect(object != null);
+    try expect(object.?.mesh != null);
 
-    buffers.printDebugStats();
+    const buffers = try loader.loadModelBuffers(test_allocator, object.?.mesh.?);
+
+    // buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
@@ -310,9 +430,13 @@ test "GltfLoader can load model with odd number of triangles" {
     );
     defer loader.deinit();
 
-    const buffers = try loader.loadModelBuffers(test_allocator);
+    const object = loader.findFirstObjectWithMesh();
+    try expect(object != null);
+    try expect(object.?.mesh != null);
 
-    buffers.printDebugStats();
+    const buffers = try loader.loadModelBuffers(test_allocator, object.?.mesh.?);
+
+    // buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
@@ -333,7 +457,33 @@ test "GltfLoader can load model texture" {
 
     var image = try loader.loadTextureData("man.png");
 
-    std.debug.print("texture: {d}x{d}\n", .{ image.width, image.height });
+    // std.debug.print("texture: {d}x{d}\n", .{ image.width, image.height });
 
     image.deinit();
+}
+
+test "GltfLoader can load scene with several objects" {
+    const test_allocator = std.testing.allocator;
+
+    zstbi.init(test_allocator);
+    defer zstbi.deinit();
+
+    const loader = try GltfLoader.init(
+        test_allocator,
+        "assets/toontown-central/scene.gltf",
+    );
+    defer loader.deinit();
+
+    const root = loader.root;
+
+    try expect(root.children.?.len == 1);
+    try expect(root.children.?[0].children.?.len == 1);
+    try expect(root.children.?[0].children.?[0].children.?.len == 1);
+    try expect(root.children.?[0].children.?[0].children.?[0].children.?.len == 76);
+
+    // root.children.?[0].printDebugInfo();
+    // root.children.?[0].children.?[0].printDebugInfo();
+    // root.children.?[0].children.?[0].children.?[0].printDebugInfo();
+    // root.children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
+    // root.children.?[0].children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
 }
