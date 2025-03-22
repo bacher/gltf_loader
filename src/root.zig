@@ -18,6 +18,7 @@ pub const GltfLoader = struct {
     gpa_allocator: std.mem.Allocator,
     gltf_wrapper: *const GltfWrapper,
     mesh_primitive: *const t.Primitive,
+    geometry_bounds: GeometryBounds,
     gltf_file_root: []const u8,
 
     pub fn init(gpa_allocator: std.mem.Allocator, file_path: []const u8) !GltfLoader {
@@ -31,7 +32,7 @@ pub const GltfLoader = struct {
 
         const gltf_meta_json = try file_handler.readToEndAlloc(
             allocator,
-            1_000_000,
+            100_000_000,
         );
 
         const gltf_meta_parsed = try std.json.parseFromSlice(
@@ -65,11 +66,14 @@ pub const GltfLoader = struct {
         // Supports only GLTF files with one primitive per mesh.
         std.debug.assert(mesh.primitives.len == 1);
 
+        const geometry_bounds = try gltf_wrapper.getGeometryBounds(&mesh.primitives[0]);
+
         return .{
             .arena = arena,
             .gpa_allocator = gpa_allocator,
             .gltf_wrapper = gltf_wrapper,
             .mesh_primitive = &mesh.primitives[0],
+            .geometry_bounds = geometry_bounds,
             .gltf_file_root = gltf_file_root,
         };
     }
@@ -162,12 +166,19 @@ pub const GltfLoader = struct {
         });
         defer self.gpa_allocator.free(buffer_file_path);
 
+        std.debug.print("loading file: {s}\n", .{buffer_file_path});
+
         return try zstbi.Image.loadFromFile(buffer_file_path, 4);
     }
 
     pub fn deinit(self: *const GltfLoader) void {
         self.arena.deinit();
     }
+};
+
+pub const GeometryBounds = struct {
+    min: [3]f64,
+    max: [3]f64,
 };
 
 const GltfWrapper = struct {
@@ -191,6 +202,26 @@ const GltfWrapper = struct {
 
     fn getBufferByIndex(self: *const GltfWrapper, buffer_index: t.BufferIndex) t.Buffer {
         return self.gltf_root.buffers[@intFromEnum(buffer_index)];
+    }
+
+    fn getGeometryBounds(self: *const GltfWrapper, primitive: *t.Primitive) !GeometryBounds {
+        const accessor = self.getAccessorByIndex(primitive.attributes.POSITION);
+
+        if (accessor.min == null or accessor.max == null) {
+            return error.NoGeometryBounds;
+        }
+
+        const min = accessor.min.?;
+        const max = accessor.max.?;
+
+        if (min.len < 3 or max.len < 3) {
+            return error.InvalidGeometryBoundsFormat;
+        }
+
+        return .{
+            .min = .{ min[0], min[1], min[2] },
+            .max = .{ max[0], max[1], max[2] },
+        };
     }
 };
 

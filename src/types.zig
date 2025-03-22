@@ -42,8 +42,8 @@ pub const Primitive = struct {
         POSITION: AccessorIndex,
         TEXCOORD_0: AccessorIndex,
         NORMAL: AccessorIndex,
-        JOINTS_0: AccessorIndex,
-        WEIGHTS_0: AccessorIndex,
+        JOINTS_0: ?AccessorIndex = null,
+        WEIGHTS_0: ?AccessorIndex = null,
     },
     indices: AccessorIndex,
     material: AccessorIndex,
@@ -51,9 +51,10 @@ pub const Primitive = struct {
 
 const ComponentType = enum(u32) {
     // TODO?
-    some1 = 5121,
-    some2 = 5123,
-    some3 = 5126,
+    const_5121 = 5121,
+    const_5123 = 5123,
+    const_5125 = 5125,
+    const_5126 = 5126,
 };
 
 pub const AccessorIndex = enum(u32) { _ };
@@ -77,7 +78,7 @@ pub const BufferViewIndex = enum(u32) { _ };
 
 pub const BufferView = struct {
     buffer: BufferIndex,
-    byteOffset: u32,
+    byteOffset: u32 = 0,
     byteLength: u32,
     target: ?TargetType = null,
 };
