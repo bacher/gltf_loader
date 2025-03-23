@@ -11,6 +11,7 @@ const t = @import("./types.zig");
 const DEBUG = false;
 
 pub const SceneObject = struct {
+    name: ?[]const u8,
     transform_matrix: ?*const t.TransformMatrix,
     children: ?[]const SceneObject,
     mesh: ?*const Mesh,
@@ -117,6 +118,7 @@ pub const GltfLoader = struct {
         }
 
         return .{
+            .name = null,
             .transform_matrix = null,
             .children = children,
             .mesh = null,
@@ -164,6 +166,7 @@ pub const GltfLoader = struct {
         }
 
         return .{
+            .name = node.name,
             .transform_matrix = transform_matrix,
             .children = children,
             .mesh = mesh,
@@ -211,6 +214,33 @@ pub const GltfLoader = struct {
                 const found = self.findFirstObjectWithMeshNested(child);
                 if (found != null) {
                     return found;
+                }
+            }
+        }
+
+        return null;
+    }
+
+    pub fn getObjectByName(self: *const GltfLoader, name: []const u8) !*const SceneObject {
+        return self.findObjectByNameNested(&self.root, name) orelse error.ObjectNotFound;
+    }
+
+    pub fn findObjectByNameNested(
+        self: *const GltfLoader,
+        object: *const SceneObject,
+        name: []const u8,
+    ) ?*const SceneObject {
+        if (object.name) |object_name| {
+            if (std.mem.eql(u8, object_name, name)) {
+                return object;
+            }
+        }
+
+        if (object.children) |children| {
+            for (children) |child| {
+                const found_object = self.findObjectByNameNested(&child, name);
+                if (found_object != null) {
+                    return found_object;
                 }
             }
         }
@@ -487,11 +517,27 @@ test "GltfLoader can load scene" {
 
     const buffers = try loader.loadModelBuffers(test_allocator, object.?.mesh.?);
 
-    buffers.printDebugStats();
+    // buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
     }
+}
+
+test "GltfLoader getObjectByName works" {
+    const test_allocator = std.testing.allocator;
+
+    zstbi.init(test_allocator);
+    defer zstbi.deinit();
+
+    const loader = try GltfLoader.init(
+        test_allocator,
+        "assets/toontown-central/scene.gltf",
+    );
+    defer loader.deinit();
+
+    const object_4 = try loader.getObjectByName("Object_4");
+    try expect(object_4.mesh != null);
 }
 
 test "GltfLoader can load model with odd number of triangles" {
