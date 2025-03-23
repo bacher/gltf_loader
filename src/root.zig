@@ -218,7 +218,11 @@ pub const GltfLoader = struct {
         return null;
     }
 
-    pub fn loadModelBuffers(self: *const GltfLoader, allocator: std.mem.Allocator, mesh: *const Mesh) !ModelBuffers {
+    pub fn loadModelBuffers(
+        self: *const GltfLoader,
+        allocator: std.mem.Allocator,
+        mesh: *const Mesh,
+    ) !ModelBuffers {
         // Supports only glTF files with one binary
         std.debug.assert(self.gltf_wrapper.gltf_root.buffers.len == 1);
         const binary_file_path = self.gltf_wrapper.gltf_root.buffers[0].uri;
@@ -248,53 +252,76 @@ pub const GltfLoader = struct {
         const file = try std.fs.cwd().openFile(buffer_file_path, .{});
         defer file.close();
 
-        const indexes_buffer = try self.loadBufferData(file, allocator, indexes_accessor);
-        const positions_buffer = try self.loadBufferData(file, allocator, positions_accessor);
-        const normals_buffer = try self.loadBufferData(file, allocator, normals_accessor);
-        const texcoord_buffer = try self.loadBufferData(file, allocator, texcoord_accessor);
-
-        const indexes_buffer_u16 = std.mem.bytesAsSlice([3]u16, indexes_buffer.slice);
-        const positions_buffer_f32 = std.mem.bytesAsSlice([3]f32, positions_buffer.slice);
-        const normals_buffer_f32 = std.mem.bytesAsSlice([3]f32, normals_buffer.slice);
-        const texcoord_buffer_f32 = std.mem.bytesAsSlice([2]f32, texcoord_buffer.slice);
-
         return .{
-            .indexes = .{
-                .data = indexes_buffer_u16,
-                .buffer = indexes_buffer.buffer,
-            },
-            .positions = .{
-                .data = positions_buffer_f32,
-                .buffer = positions_buffer.buffer,
-            },
-            .normals = .{
-                .data = normals_buffer_f32,
-                .buffer = normals_buffer.buffer,
-            },
-            .texcoord = .{
-                .data = texcoord_buffer_f32,
-                .buffer = texcoord_buffer.buffer,
-            },
+            .indexes = try self.loadModelBuffer(file, allocator, indexes_accessor),
+            .positions = try self.loadModelBuffer(file, allocator, positions_accessor),
+            .normals = try self.loadModelBuffer(file, allocator, normals_accessor),
+            .texcoord = try self.loadModelBuffer(file, allocator, texcoord_accessor),
         };
     }
 
-    fn loadBufferData(self: *const GltfLoader, file: std.fs.File, allocator: std.mem.Allocator, accessor: t.Accessor) !LoadedBuffer {
+    fn loadModelBuffer(
+        self: *const GltfLoader,
+        file: std.fs.File,
+        allocator: std.mem.Allocator,
+        accessor: t.Accessor,
+    ) !ModelBuffer {
         const buffer_view = self.gltf_wrapper.getBufferViewByIndex(accessor.bufferView);
 
-        const div4: u32 = @divFloor(buffer_view.byteLength, 4);
-        var aligned_lenght = div4 * 4;
-        if (aligned_lenght != buffer_view.byteLength) {
-            aligned_lenght += 4;
+        var element_type: ElementType = undefined;
+        var component_byte_length: u32 = undefined;
+        switch (accessor.componentType) {
+            .gl_unsigned_byte => {
+                component_byte_length = 1;
+                element_type = .u8;
+            },
+            .gl_unsigned_short => {
+                component_byte_length = 2;
+                element_type = .u16;
+            },
+            .gl_unsigned_int => {
+                component_byte_length = 4;
+                element_type = .u32;
+            },
+            .gl_float => {
+                component_byte_length = 4;
+                element_type = .float;
+            },
         }
 
-        const result_buffer = try allocator.alignedAlloc(u8, 4, aligned_lenght);
+        var component_number: u32 = undefined;
+        if (std.mem.eql(u8, accessor.type, "SCALAR")) {
+            component_number = 1;
+        } else if (std.mem.eql(u8, accessor.type, "VEC2")) {
+            component_number = 2;
+        } else if (std.mem.eql(u8, accessor.type, "VEC3")) {
+            component_number = 3;
+        } else if (std.mem.eql(u8, accessor.type, "VEC4")) {
+            component_number = 4;
+        }
 
-        try file.seekTo(buffer_view.byteOffset);
-        const read_size = try file.read(result_buffer[0..buffer_view.byteLength]);
-        std.debug.assert(read_size == buffer_view.byteLength);
+        const byte_offset = buffer_view.byteOffset + accessor.byteOffset;
+        const byte_length = accessor.count * component_byte_length * component_number;
+
+        // std.debug.print("offset={d:7} len={d:7} buffer_view_len={d:7}\n", .{ byte_offset, byte_length, buffer_view.byteLength });
+
+        const div4: u32 = @divFloor(byte_length, 4);
+        var aligned_length = div4 * 4;
+        if (aligned_length != byte_length) {
+            aligned_length += 4;
+        }
+
+        const result_buffer = try allocator.alignedAlloc(u8, 4, aligned_length);
+
+        try file.seekTo(byte_offset);
+        const read_size = try file.read(result_buffer[0..byte_length]);
+        std.debug.assert(read_size == byte_length);
 
         return .{
-            .slice = result_buffer[0..buffer_view.byteLength],
+            .type = element_type,
+            .elements_count = accessor.count,
+            .component_number = component_number,
+            .byte_length = byte_length,
             .buffer = result_buffer,
         };
     }
@@ -365,24 +392,48 @@ const GltfWrapper = struct {
     }
 };
 
-pub fn ModelBuffer(comptime T: type) type {
-    return struct {
-        data: []T,
-        buffer: []u8,
-    };
-}
+pub const ElementType = enum(u8) {
+    u8 = 1,
+    u16,
+    u32,
+    float,
+};
+
+pub const ModelBuffer = struct {
+    type: ElementType,
+    component_number: u32,
+    elements_count: u32,
+    byte_length: u32,
+    buffer: []align(4) const u8,
+
+    pub fn asTypedSlice(model_buffer: *const ModelBuffer, comptime SliceType: type) ![]const SliceType {
+        const ElementElementType = std.meta.Elem(SliceType);
+
+        if (!((ElementElementType == u8 and model_buffer.type == .u8) or (ElementElementType == u16 and model_buffer.type == .u16) or (ElementElementType == u16 and model_buffer.type == .u16) or (ElementElementType == f32 and model_buffer.type == .float))) {
+            return error.TypeMismatch;
+        }
+
+        if (@typeInfo(SliceType).array.len != model_buffer.component_number) {
+            return error.ArraySizeMismatch;
+        }
+
+        const slice: []align(4) const u8 = model_buffer.buffer[0..model_buffer.byte_length];
+
+        return std.mem.bytesAsSlice(SliceType, slice);
+    }
+};
 
 pub const ModelBuffers = struct {
-    indexes: ModelBuffer([3]u16),
-    positions: ModelBuffer([3]f32),
-    normals: ModelBuffer([3]f32),
-    texcoord: ModelBuffer([2]f32),
+    indexes: ModelBuffer,
+    positions: ModelBuffer,
+    normals: ModelBuffer,
+    texcoord: ModelBuffer,
 
     pub fn printDebugStats(self: *const ModelBuffers) void {
-        std.debug.print("indexes   buffer len = {}\n", .{self.indexes.data.len});
-        std.debug.print("positions buffer len = {}\n", .{self.positions.data.len});
-        std.debug.print("normals   buffer len = {}\n", .{self.normals.data.len});
-        std.debug.print("texcoord  buffer len = {}\n", .{self.texcoord.data.len});
+        std.debug.print("indexes   buffer len = {}\n", .{self.indexes.elements_count});
+        std.debug.print("positions buffer len = {}\n", .{self.positions.elements_count});
+        std.debug.print("normals   buffer len = {}\n", .{self.normals.elements_count});
+        std.debug.print("texcoord  buffer len = {}\n", .{self.texcoord.elements_count});
     }
 
     pub fn deinit(self: *const ModelBuffers, allocator: std.mem.Allocator) void {
@@ -412,6 +463,31 @@ test "GltfLoader can load model" {
     const buffers = try loader.loadModelBuffers(test_allocator, object.?.mesh.?);
 
     // buffers.printDebugStats();
+
+    defer {
+        buffers.deinit(test_allocator);
+    }
+}
+
+test "GltfLoader can load scene" {
+    const test_allocator = std.testing.allocator;
+
+    zstbi.init(test_allocator);
+    defer zstbi.deinit();
+
+    const loader = try GltfLoader.init(
+        test_allocator,
+        "assets/toontown-central/scene.gltf",
+    );
+    defer loader.deinit();
+
+    const object = loader.findFirstObjectWithMesh();
+    try expect(object != null);
+    try expect(object.?.mesh != null);
+
+    const buffers = try loader.loadModelBuffers(test_allocator, object.?.mesh.?);
+
+    buffers.printDebugStats();
 
     defer {
         buffers.deinit(test_allocator);
@@ -486,4 +562,25 @@ test "GltfLoader can load scene with several objects" {
     // root.children.?[0].children.?[0].children.?[0].printDebugInfo();
     // root.children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
     // root.children.?[0].children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
+}
+
+test "ModelBuffer asTypedSlice works" {
+    const buffer: [3]f32 = .{ 0.1, 0.2, 0.3 };
+
+    const underlying_bytes = std.mem.sliceAsBytes(&buffer);
+
+    const model_buffer = ModelBuffer{
+        .buffer = underlying_bytes,
+        .type = .float,
+        .elements_count = 3,
+        .byte_length = @sizeOf(@TypeOf(buffer)),
+        .component_number = 3,
+    };
+
+    const slice = try model_buffer.asTypedSlice([3]f32);
+
+    try std.testing.expect(slice.len == 1);
+    try std.testing.expect(slice[0][0] == 0.1);
+    try std.testing.expect(slice[0][1] == 0.2);
+    try std.testing.expect(slice[0][2] == 0.3);
 }

@@ -52,16 +52,17 @@ pub const Primitive = struct {
 
 const ComponentType = enum(u32) {
     // TODO?
-    const_5121 = 5121,
-    const_5123 = 5123,
-    const_5125 = 5125,
-    const_5126 = 5126,
+    gl_unsigned_byte = 5121,
+    gl_unsigned_short = 5123,
+    gl_unsigned_int = 5125,
+    gl_float = 5126,
 };
 
 pub const AccessorIndex = enum(u32) { _ };
 
 pub const Accessor = struct {
     bufferView: BufferViewIndex,
+    byteOffset: u32 = 0,
     componentType: ComponentType,
     count: u32,
     min: ?[]f64 = null,
