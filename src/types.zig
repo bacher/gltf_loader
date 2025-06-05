@@ -51,7 +51,7 @@ pub const Primitive = struct {
         WEIGHTS_0: ?AccessorIndex = null,
     },
     indices: AccessorIndex,
-    material: AccessorIndex,
+    material: MaterialIndex,
 };
 
 pub const ComponentType = enum(u32) {
@@ -98,13 +98,15 @@ pub const Buffer = struct {
 
 pub const TransformMatrix = [16]f32;
 
+pub const MaterialIndex = enum(u32) { _ };
+
 pub const Material = struct {
     name: ?conststring = null,
     alphaMode: ?conststring = null,
     doubleSided: ?bool = null,
     pbrMetallicRoughness: struct {
         baseColorTexture: ?struct {
-            index: usize,
+            index: TextureIndex,
         } = null,
         baseColorFactor: ?[4]f32 = null,
         metallicFactor: f32,
@@ -112,9 +114,11 @@ pub const Material = struct {
     },
 };
 
+pub const TextureIndex = enum(u32) { _ };
+
 pub const Texture = struct {
-    sampler: usize,
-    source: usize,
+    sampler: SamplerIndex,
+    source: ImageIndex,
 };
 
 pub const MagFilter = enum(u32) {
@@ -132,12 +136,16 @@ pub const WrapType = enum(u32) {
     gl_mirrored_repeat = 33648,
 };
 
+pub const SamplerIndex = enum(u32) { _ };
+
 pub const Sampler = struct {
     magFilter: MagFilter,
     minFilter: MinFilter,
     wrapS: WrapType,
     wrapT: WrapType,
 };
+
+pub const ImageIndex = enum(u32) { _ };
 
 pub const Image = struct {
     uri: conststring,

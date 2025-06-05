@@ -366,6 +366,24 @@ pub const GltfLoader = struct {
         };
     }
 
+    pub fn getObjectMaterial(
+        self: *const GltfLoader,
+        obj: *const SceneObject,
+    ) t.Material {
+        return self.gltf_wrapper.getMatrialByIndex(
+            obj.mesh.?.mesh_primitive.material,
+        );
+    }
+
+    pub fn loadMaterialTextureData(self: *const GltfLoader, material: t.Material) !?zstbi.Image {
+        const baseColorTexture = material.pbrMetallicRoughness.baseColorTexture orelse return null;
+
+        const texture_info = self.gltf_wrapper.getTextureByIndex(baseColorTexture.index);
+        const image_info = self.gltf_wrapper.getImageByIndex(texture_info.source);
+
+        return try self.loadTextureData(image_info.uri);
+    }
+
     pub fn loadTextureData(self: *const GltfLoader, file_path: []const u8) !zstbi.Image {
         const buffer_file_path = try std.fs.path.joinZ(self.gpa_allocator, &.{
             self.gltf_file_root,
@@ -409,6 +427,22 @@ const GltfWrapper = struct {
 
     fn getBufferByIndex(self: *const GltfWrapper, buffer_index: t.BufferIndex) t.Buffer {
         return self.gltf_root.buffers[@intFromEnum(buffer_index)];
+    }
+
+    fn getMatrialByIndex(self: *const GltfWrapper, material_index: t.MaterialIndex) t.Material {
+        return self.gltf_root.materials[@intFromEnum(material_index)];
+    }
+
+    fn getTextureByIndex(self: *const GltfWrapper, texture_index: t.TextureIndex) t.Texture {
+        return self.gltf_root.textures[@intFromEnum(texture_index)];
+    }
+
+    fn getSamplerByIndex(self: *const GltfWrapper, sampler_index: t.SamplerIndex) t.Sampler {
+        return self.gltf_root.samplers[@intFromEnum(sampler_index)];
+    }
+
+    fn getImageByIndex(self: *const GltfWrapper, image_index: t.ImageIndex) t.Image {
+        return self.gltf_root.images[@intFromEnum(image_index)];
     }
 
     fn getGeometryBounds(self: *const GltfWrapper, primitive: *t.Primitive) !GeometryBounds {
@@ -635,6 +669,15 @@ test "GltfLoader more complex flow" {
     const gazebo = try loader.getObjectByName("ttc_gazebo_11");
 
     try expect(gazebo.children != null);
+
+    const object = loader.findFirstObjectWithMeshNested(gazebo);
+
+    try expect(object != null);
+
+    const material = loader.getObjectMaterial(object.?);
+
+    var texture = (try loader.loadMaterialTextureData(material)).?;
+    defer texture.deinit();
 }
 
 test "ModelBuffer asTypedSlice works" {
