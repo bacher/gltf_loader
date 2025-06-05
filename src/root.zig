@@ -9,6 +9,7 @@ const expect = std.testing.expect;
 const t = @import("./types.zig");
 
 const DEBUG = false;
+const DEBUG_SHOW_NODE_NAMES = false;
 
 pub const SceneObject = struct {
     name: ?[]const u8,
@@ -34,6 +35,7 @@ pub const SceneObject = struct {
 };
 
 pub const Mesh = struct {
+    name: ?[]const u8,
     mesh_primitive: *const t.Primitive,
     geometry_bounds: GeometryBounds,
 };
@@ -146,6 +148,8 @@ pub const GltfLoader = struct {
 
             const geometry_bounds = try gltf_wrapper.getGeometryBounds(&gltf_mesh.primitives[0]);
             mesh_ptr.* = .{
+                // .name = gltf_mesh.name,
+                .name = null,
                 .mesh_primitive = &gltf_mesh.primitives[0],
                 .geometry_bounds = geometry_bounds,
             };
@@ -165,6 +169,12 @@ pub const GltfLoader = struct {
             children = children_ptr;
         }
 
+        if (DEBUG_SHOW_NODE_NAMES) {
+            if (node.name) |name| {
+                std.debug.print("node name: {s}\n", .{name});
+            }
+        }
+
         return .{
             .name = node.name,
             .transform_matrix = transform_matrix,
@@ -178,7 +188,7 @@ pub const GltfLoader = struct {
             const node = gltf_wrapper.getNodeByIndex(node_index);
 
             if (DEBUG) {
-                std.debug.print("NODE[{}] = \"{s}\" {any}\n", .{
+                std.debug.print("NODE[{}] = '{s}' {any}\n", .{
                     node_index,
                     node.name.?,
                     node,
@@ -201,7 +211,7 @@ pub const GltfLoader = struct {
         return self.findFirstObjectWithMeshNested(&self.root);
     }
 
-    fn findFirstObjectWithMeshNested(
+    pub fn findFirstObjectWithMeshNested(
         self: *const GltfLoader,
         object: *const SceneObject,
     ) ?*const SceneObject {
@@ -213,7 +223,7 @@ pub const GltfLoader = struct {
             for (children) |*child| {
                 const found = self.findFirstObjectWithMeshNested(child);
                 if (found != null) {
-                    return found;
+                    return found.?;
                 }
             }
         }
@@ -237,8 +247,8 @@ pub const GltfLoader = struct {
         }
 
         if (object.children) |children| {
-            for (children) |child| {
-                const found_object = self.findObjectByNameNested(&child, name);
+            for (children) |*child| {
+                const found_object = self.findObjectByNameNested(child, name);
                 if (found_object != null) {
                     return found_object;
                 }
@@ -608,6 +618,23 @@ test "GltfLoader can load scene with several objects" {
     // root.children.?[0].children.?[0].children.?[0].printDebugInfo();
     // root.children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
     // root.children.?[0].children.?[0].children.?[0].children.?[0].children.?[0].printDebugInfo();
+}
+
+test "GltfLoader more complex flow" {
+    const test_allocator = std.testing.allocator;
+
+    zstbi.init(test_allocator);
+    defer zstbi.deinit();
+
+    const loader = try GltfLoader.init(
+        test_allocator,
+        "assets/toontown-central/scene.gltf",
+    );
+    defer loader.deinit();
+
+    const gazebo = try loader.getObjectByName("ttc_gazebo_11");
+
+    try expect(gazebo.children != null);
 }
 
 test "ModelBuffer asTypedSlice works" {

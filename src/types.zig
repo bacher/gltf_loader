@@ -10,6 +10,10 @@ pub const GltfRoot = struct {
     accessors: []Accessor,
     bufferViews: []BufferView,
     buffers: []Buffer,
+    materials: []Material,
+    textures: []Texture = &.{},
+    samplers: []Sampler = &.{},
+    images: []Image = &.{},
 };
 
 pub const SceneIndex = enum(u32) { _ };
@@ -21,7 +25,7 @@ pub const Scene = struct {
 pub const NodeIndex = enum(u32) { _ };
 
 pub const Node = struct {
-    name: ?conststring,
+    name: ?conststring = null,
     children: ?[]NodeIndex = null,
     rotation: ?[4]f64 = null,
     scale: ?[3]f64 = null,
@@ -34,7 +38,7 @@ pub const Node = struct {
 pub const MeshIndex = enum(u32) { _ };
 
 pub const Mesh = struct {
-    name: ?conststring = null,
+    name1: ?conststring = null,
     primitives: []Primitive,
 };
 
@@ -50,7 +54,7 @@ pub const Primitive = struct {
     material: AccessorIndex,
 };
 
-const ComponentType = enum(u32) {
+pub const ComponentType = enum(u32) {
     // TODO?
     gl_unsigned_byte = 5121,
     gl_unsigned_short = 5123,
@@ -93,3 +97,48 @@ pub const Buffer = struct {
 };
 
 pub const TransformMatrix = [16]f32;
+
+pub const Material = struct {
+    name: ?conststring = null,
+    alphaMode: ?conststring = null,
+    doubleSided: ?bool = null,
+    pbrMetallicRoughness: struct {
+        baseColorTexture: ?struct {
+            index: usize,
+        } = null,
+        baseColorFactor: ?[4]f32 = null,
+        metallicFactor: f32,
+        roughnessFactor: f32,
+    },
+};
+
+pub const Texture = struct {
+    sampler: usize,
+    source: usize,
+};
+
+pub const MagFilter = enum(u32) {
+    gl_linear = 9729,
+};
+
+pub const MinFilter = enum(u32) {
+    gl_linear_mipmap_linear = 9987,
+    gl_linear_mipmap_nearest = 9985,
+};
+
+pub const WrapType = enum(u32) {
+    gl_repeat = 10497,
+    gl_clamp_to_edge = 33071,
+    gl_mirrored_repeat = 33648,
+};
+
+pub const Sampler = struct {
+    magFilter: MagFilter,
+    minFilter: MinFilter,
+    wrapS: WrapType,
+    wrapT: WrapType,
+};
+
+pub const Image = struct {
+    uri: conststring,
+};
