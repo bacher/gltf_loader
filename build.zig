@@ -37,7 +37,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
     });
     lib.root_module.addImport("zstbi", zstbi.module("root"));
-    lib.linkLibrary(zstbi.artifact("zstbi"));
+    // lib.linkLibrary(zstbi.artifact("zstbi"));
 
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
@@ -48,7 +48,7 @@ pub fn build(b: *std.Build) void {
     });
 
     lib_unit_tests.root_module.addImport("zstbi", zstbi.module("root"));
-    lib_unit_tests.linkLibrary(zstbi.artifact("zstbi"));
+    // lib_unit_tests.linkLibrary(zstbi.artifact("zstbi"));
 
     const run_lib_unit_tests = b.addRunArtifact(lib_unit_tests);
 
