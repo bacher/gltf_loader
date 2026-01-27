@@ -351,7 +351,7 @@ pub const GltfLoader = struct {
             aligned_length += 4;
         }
 
-        const result_buffer = try allocator.alignedAlloc(u8, 4, aligned_length);
+        const result_buffer = try allocator.alignedAlloc(u8, .@"4", aligned_length);
 
         try file.seekTo(byte_offset);
         const read_size = try file.read(result_buffer[0..byte_length]);
