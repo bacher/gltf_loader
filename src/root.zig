@@ -402,8 +402,10 @@ pub const GltfLoader = struct {
 };
 
 pub const StbiWrapper = struct {
-    pub fn loadTextureData(file_path: []const u8) !zstbi.Image {
-        return try zstbi.Image.loadFromFile(file_path, 4);
+    pub fn loadTextureData(allocator: std.mem.Allocator, file_path: []const u8) !zstbi.Image {
+        const file_path_z = try allocator.dupeZ(u8, file_path);
+        defer allocator.free(file_path_z);
+        return try zstbi.Image.loadFromFile(file_path_z, 4);
     }
 };
 
