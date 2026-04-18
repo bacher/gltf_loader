@@ -401,6 +401,12 @@ pub const GltfLoader = struct {
     }
 };
 
+pub const StbiWrapper = struct {
+    pub fn loadTextureData(file_path: []const u8) !zstbi.Image {
+        return try zstbi.Image.loadFromFile(file_path, 4);
+    }
+};
+
 pub const GeometryBounds = struct {
     min: [3]f64,
     max: [3]f64,
